@@ -1,0 +1,13 @@
+[package]
+name = "sender"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clippy = "0.0.302"
+pnet = "0.35.0"
+libc = "*"
+gstreamer = "0.23.2"
+gstreamer-app = "0.23.2"
+gstreamer-video = "0.23.2"
+gstreamer-pbutils = "0.23.2"
