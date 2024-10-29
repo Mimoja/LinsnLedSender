@@ -31,8 +31,7 @@ const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
 const CHUNK_COUNT: usize = BUFFER_Y * (BUFFER_X) / (PAYLOAD_SIZE_SENDER / 3) + 1;
 use gstreamer::prelude::*;
-use gstreamer::{Buffer, ElementFactory, Pipeline};
-use gstreamer_video::VideoFrameRef;
+use gstreamer::{ElementFactory, Pipeline};
 use std::sync::{Arc, Mutex};
 
 fn init_screencapture() {
@@ -48,18 +47,18 @@ fn init_screencapture() {
 
     // Configure appsink properties to enable frame capture
     let sink = ElementFactory::make("appsink")
-        .property("emit-signals", &true)
-        .property("sync", &false)
+        .property("emit-signals", true)
+        .property("sync", false)
         .build()
         .unwrap();
 
     // Add elements to the pipeline
     pipeline
-        .add_many(&[&src, &convert, &sink])
+        .add_many([&src, &convert, &sink])
         .expect("Failed to add elements to the pipeline");
 
     // Link elements in the pipeline
-    gstreamer::Element::link_many(&[&src, &convert, &sink]).expect("Failed to link elements");
+    gstreamer::Element::link_many([&src, &convert, &sink]).expect("Failed to link elements");
 
     // Frame buffer to store the captured frame
     let frame_buffer = Arc::new(Mutex::new(Vec::new()));
@@ -102,11 +101,11 @@ fn init_screencapture() {
         .expect("Unable to set pipeline to `Playing` state");
 }
 
-fn fill_image(image: &mut Vec<Pixel>, counter: i16, image_counter: u128) {
-    let sine_input = (image_counter as f64 / 100.0);
+fn fill_image(image: &mut [Pixel], counter: i16, image_counter: u128) {
+    let sine_input = image_counter as f64 / 100.0;
     let sine = sine_input.sin() * 0x69 as f64;
-    const CHANGE_PER_LINE_X: f64 = (0xff as f64 / PANEL_X as f64);
-    const CHANGE_PER_LINE_Y: f64 = (0xff as f64 / PANEL_Y as f64);
+    const CHANGE_PER_LINE_X: f64 = 0xff as f64 / PANEL_X as f64;
+    const CHANGE_PER_LINE_Y: f64 = 0xff as f64 / PANEL_Y as f64;
 
     for fake_x in 0..BUFFER_X + 1 {
         if fake_x == 0 {
@@ -121,7 +120,7 @@ fn fill_image(image: &mut Vec<Pixel>, counter: i16, image_counter: u128) {
                 continue;
             }
             if y < 8 {
-                if (x / 8 % 2 == 0) {
+                if x / 8 % 2 == 0 {
                     image[fake_x * BUFFER_Y + y] = Pixel::white()
                 } else {
                     image[fake_x * BUFFER_Y + y] = Pixel::black()
@@ -148,7 +147,7 @@ fn fill_image(image: &mut Vec<Pixel>, counter: i16, image_counter: u128) {
 }
 
 fn send_image_mmsg(
-    image: &Vec<Pixel>,
+    image: &[Pixel],
     src_mac: MacAddr,
     dst_mac: MacAddr,
     socket_address: &mut sockaddr_ll,
@@ -168,7 +167,7 @@ fn send_image_mmsg(
             + HEADER_SIZE]; CHUNK_COUNT];
         for (package_id, chunk) in chunks.enumerate() {
             // Convert the pixel data to bytes
-            let mut payload = vec![0 as u8; PAYLOAD_SIZE_SENDER];
+            let mut payload = vec![0_u8; PAYLOAD_SIZE_SENDER];
             for (index, pixel) in chunk.iter().enumerate() {
                 let pbytes = pixel_to_bytes(ColorFormat::BRG, pixel);
                 payload[index * BYTES_PER_PIXEL..(index + 1) * BYTES_PER_PIXEL]
@@ -184,7 +183,7 @@ fn send_image_mmsg(
                 payload: payload.try_into().unwrap(),
             };
             ethernet_packets[package_id]
-                .copy_from_slice(&packet.as_ethernet(Some(src_mac), Some(dst_mac)).packet());
+                .copy_from_slice(packet.as_ethernet(Some(src_mac), Some(dst_mac)).packet());
 
             // iovec points to the packet buffer
             iovecs[package_id].iov_base = ethernet_packets[package_id].as_ptr() as *mut c_void;
@@ -233,7 +232,7 @@ fn send_image_mmsg(
 }
 
 fn send_image(
-    image: &Vec<Pixel>,
+    image: &[Pixel],
     src_mac: MacAddr,
     dst_mac: MacAddr,
     tx: &mut Box<dyn datalink::DataLinkSender>,
@@ -241,7 +240,7 @@ fn send_image(
     let chunks = image.chunks(CHUNK_SIZE);
     for (package_id, chunk) in chunks.enumerate() {
         // Convert the pixel data to bytes
-        let mut payload = vec![0 as u8; PAYLOAD_SIZE_SENDER];
+        let mut payload = vec![0_u8; PAYLOAD_SIZE_SENDER];
         for (index, pixel) in chunk.iter().enumerate() {
             let pbytes = pixel_to_bytes(ColorFormat::BRG, pixel);
             payload[index * BYTES_PER_PIXEL..(index + 1) * BYTES_PER_PIXEL]
@@ -257,7 +256,7 @@ fn send_image(
             payload: payload.try_into().unwrap(),
         };
         let ethernet_packet = packet.as_ethernet(Some(src_mac), Some(dst_mac));
-        match tx.send_to(&ethernet_packet.packet(), None) {
+        match tx.send_to(ethernet_packet.packet(), None) {
             Some(Ok(_)) => (),
             Some(Err(e)) => eprintln!("Failed to send packet: {}", e),
             None => eprintln!("Failed to send packet: No response"),
@@ -329,7 +328,7 @@ fn main() {
 
         println!("Send Buffer size: {:}", n);
 
-        let src_mac = interface.mac.or(Some(MacAddr::broadcast())).unwrap();
+        let src_mac = interface.mac.unwrap_or(MacAddr::broadcast());
         let dst_mac = MacAddr::zero();
 
         let dest_mac_byte = [

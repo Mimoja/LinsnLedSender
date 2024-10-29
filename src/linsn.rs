@@ -120,7 +120,7 @@ impl LinsnHeader {
         (0x100 - (checksum & 0xFF)) as u8
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(self) -> Vec<u8> {
         let mut bytes = vec![];
         bytes.extend_from_slice(&self.package_id.to_le_bytes());
         bytes.extend_from_slice(&self.unknown);
@@ -132,7 +132,7 @@ impl LinsnHeader {
 
     pub fn empty(package_id: u32) -> Self {
         LinsnHeader {
-            package_id: package_id,
+            package_id,
             unknown: [0u8; 4],
             cmd: LinsnCommand::NONE as u8,
             cmd_data: [0u8; 22],
@@ -172,6 +172,38 @@ impl LinsnHeader {
     }
     pub fn chunk_start(sender_mac: MacAddr) -> Self {
         LinsnHeader::identify(0, sender_mac)
+    }
+}
+
+impl LinsnSenderPacket {
+    pub fn to_bytes(self) -> Vec<u8> {
+        let mut bytes = vec![];
+        bytes.extend_from_slice(&self.header.to_bytes());
+        bytes.extend_from_slice(&self.payload);
+        bytes
+    }
+    pub fn as_ethernet(&self, src: Option<MacAddr>, dst: Option<MacAddr>) -> MutableEthernetPacket {
+        let src_mac = match src {
+            Some(mac) => mac,
+            None => MacAddr::broadcast(),
+        };
+        let dst_mac = match dst {
+            Some(mac) => mac,
+            None => MacAddr::zero(),
+        };
+        let ethernet_payload = self.to_bytes();
+
+        let packet_size = MutableEthernetPacket::minimum_packet_size() + ethernet_payload.len();
+        let packet_data = vec![0u8; packet_size];
+        let mut ethernet_packet = MutableEthernetPacket::owned(packet_data).unwrap();
+
+        ethernet_packet.set_source(src_mac);
+        ethernet_packet.set_destination(dst_mac);
+        ethernet_packet.set_ethertype(EtherType(ETHERNET_TYPE_SENDER));
+
+        ethernet_packet.set_payload(&ethernet_payload);
+
+        ethernet_packet
     }
 }
 
@@ -255,37 +287,5 @@ mod tests {
             bytes, expected_bytes,
             "Byte representation does not match expected value"
         );
-    }
-}
-
-impl LinsnSenderPacket {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![];
-        bytes.extend_from_slice(&self.header.to_bytes());
-        bytes.extend_from_slice(&self.payload);
-        bytes
-    }
-    pub fn as_ethernet(&self, src: Option<MacAddr>, dst: Option<MacAddr>) -> MutableEthernetPacket {
-        let src_mac = match src {
-            Some(mac) => mac,
-            None => MacAddr::broadcast(),
-        };
-        let dst_mac = match dst {
-            Some(mac) => mac,
-            None => MacAddr::zero(),
-        };
-        let ethernet_payload = self.to_bytes();
-
-        let packet_size = MutableEthernetPacket::minimum_packet_size() + ethernet_payload.len();
-        let packet_data = vec![0u8; packet_size];
-        let mut ethernet_packet = MutableEthernetPacket::owned(packet_data).unwrap();
-
-        ethernet_packet.set_source(src_mac);
-        ethernet_packet.set_destination(dst_mac);
-        ethernet_packet.set_ethertype(EtherType(ETHERNET_TYPE_SENDER));
-
-        ethernet_packet.set_payload(&ethernet_payload);
-
-        ethernet_packet
     }
 }
