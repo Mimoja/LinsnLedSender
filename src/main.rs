@@ -1,10 +1,18 @@
 mod linsn;
 
+use std::ops::DerefMut;
+use std::rc::Rc;
 use std::time::Duration;
 use std::time::Instant;
 
+use gstreamer::prelude::*;
+use gstreamer::Caps;
+use gstreamer::Fraction;
+use gstreamer::Structure;
+use gstreamer::{ElementFactory, Pipeline};
 use gstreamer_app::AppSink;
 use gstreamer_app::AppSinkCallbacks;
+use gstreamer_video::VideoInfo;
 use libc::{
     c_void, close, if_nametoindex, iovec, mmsghdr, sendmmsg, sockaddr_ll, socket, AF_PACKET,
     ETH_ALEN, ETH_P_ALL, SOCK_RAW,
@@ -15,81 +23,190 @@ use linsn::{
 };
 use pnet::datalink;
 use pnet::datalink::Channel;
+use pnet::datalink::DataLinkSender;
 use pnet::packet::ethernet::MutableEthernetPacket;
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
-const BUFFER_X: usize = 200;
-const BUFFER_Y: usize = 1024;
 const PANEL_X: usize = 192;
 const PANEL_Y: usize = 192;
 const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
-const CHUNK_COUNT: usize = BUFFER_Y * (BUFFER_X) / (PAYLOAD_SIZE_SENDER / 3) + 1;
-use gstreamer::prelude::*;
-use gstreamer::{ElementFactory, Pipeline};
-use std::sync::{Arc, Mutex};
 
-fn init_screencapture() {
+fn yuv_to_rgb(y: f32, u: f32, v: f32) -> [u8; 3] {
+    let r = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
+    let g = (y - 0.344136 * u - 0.714136 * v).clamp(0.0, 255.0) as u8;
+    let b = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+    [r, g, b]
+}
+
+fn init_screencapture<F>(on_frame: F)
+where
+    F: Fn(Vec<Pixel>, u32, u32) + Send + Sync + 'static,
+{
     gstreamer::init().expect("Failed to initialize GStreamer");
 
     // Create a GStreamer pipeline
     let pipeline = Pipeline::with_name("screen-capture");
+    let use_file = true;
+    // // Create PipeWire source element (for Wayland screen capture)
+    // let src = ElementFactory::make("pipewiresrc")
+    //     .property("path", "/org/freedesktop/portal/desktop") // Common path for PipeWire screen capture
+    //     .build()
+    //     .unwrap();
 
-    // Create PipeWire source element (for Wayland screen capture)
-    let src = ElementFactory::make("pipewiresrc").build().unwrap();
-    // Create other elements: videoconvert and appsink
+    // Set up the source element based on the boolean flag
+    let src = if use_file {
+        // filesrc with decodebin for video files
+        let filesrc = ElementFactory::make("filesrc")
+            .property("location", "big_buck_bunny_1080p_h264.mov") // Set the path to your file
+            .build()
+            .unwrap();
+        let decode = ElementFactory::make("decodebin").build().unwrap();
+
+        pipeline.add_many(&[&filesrc, &decode]).unwrap();
+        filesrc.link(&decode).unwrap();
+
+        // Return decodebin as the source
+        Some(decode)
+    } else {
+        // ximagesrc for screen capture
+        let ximagesrc = ElementFactory::make("ximagesrc")
+            .property("use-damage", false)
+            .property("show-pointer", true)
+            .build()
+            .unwrap();
+
+        pipeline.add(&ximagesrc).unwrap();
+        Some(ximagesrc)
+    };
+
     let convert = ElementFactory::make("videoconvert").build().unwrap();
+    let scale = ElementFactory::make("videoconvertscale")
+        .property("add-borders", true)
+        .build()
+        .unwrap();
+    let rate = ElementFactory::make("videorate").build().unwrap();
+    let clocksync = ElementFactory::make("clocksync").build().unwrap();
+    let mut caps = Caps::builder("video/x-raw").field("format", "BGRx");
+
+    if use_file {
+        caps = caps
+            .field("height", PANEL_X as i32)
+            .field("width", PANEL_Y as i32)
+    } else {
+        caps = caps
+            .field("height", PANEL_X as i32)
+            .field("width", PANEL_Y as i32)
+            .field("framerate", &Fraction::new(120, 1));
+    }
+    let caps = caps.build();
 
     // Configure appsink properties to enable frame capture
     let sink = ElementFactory::make("appsink")
         .property("emit-signals", true)
         .property("sync", false)
+        .property("caps", &caps)
         .build()
         .unwrap();
 
     // Add elements to the pipeline
     pipeline
-        .add_many([&src, &convert, &sink])
+        .add_many(&[&convert, &scale, &rate, &clocksync, &sink])
         .expect("Failed to add elements to the pipeline");
 
     // Link elements in the pipeline
-    gstreamer::Element::link_many([&src, &convert, &sink]).expect("Failed to link elements");
+    gstreamer::Element::link_many(&[&convert, &scale, &rate, &clocksync, &sink])
+        .expect("Failed to link elements");
 
-    // Frame buffer to store the captured frame
-    let frame_buffer = Arc::new(Mutex::new(Vec::new()));
+    // Dynamically link decodebin to videoconvert if filesrc is used
+    if use_file {
+        if let Some(decode) = src {
+            decode.connect_pad_added(move |_, src_pad| {
+                let sink_pad = convert.static_pad("sink").expect("Failed to get sink pad");
+                if !sink_pad.is_linked() {
+                    src_pad
+                        .link(&sink_pad)
+                        .expect("Failed to link decodebin to videoconvert");
+                }
+            });
+        }
+    } else {
+        // Directly link ximagesrc to videoconvert if screen capture is used
+        if let Some(src_element) = src {
+            src_element.link(&convert).unwrap();
+        }
+    }
 
-    // Connect the new-sample signal on the appsink to capture frames
-    let frame_buffer_clone = Arc::clone(&frame_buffer);
+    // Wrap the callback in an Arc<Mutex> for safe sharing across threads
+    let on_frame = Arc::new(on_frame);
+    let on_frame_clone = Arc::clone(&on_frame);
+
     let appsink = sink
         .dynamic_cast::<AppSink>()
         .expect("Sink element is expected to be an AppSink");
 
     appsink.set_callbacks(
-        AppSinkCallbacks::builder()
+        gstreamer_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
-                // Pull the sample
-                let sample = appsink.pull_sample().unwrap();
+                let sample = match appsink.pull_sample() {
+                    Ok(sample) => sample,
+                    Err(_) => return Err(gstreamer::FlowError::Eos),
+                };
 
                 // Get the buffer from the sample
                 let buffer = sample.buffer().expect("Failed to get buffer from sample");
+                // Get the caps and extract resolution
+                let caps = sample.caps().expect("Failed to get caps from sample");
+                // println!("Caps: {:?}", caps);
+
+                let info = VideoInfo::from_caps(&caps).expect("Failed to get VideoInfo from caps");
+                let width = info.width();
+                let height = info.height();
 
                 // Map the buffer to read frame data
                 let map = buffer
                     .map_readable()
                     .expect("Failed to map buffer readable");
 
-                // Lock and write data to the frame buffer
-                let mut buf = frame_buffer_clone.lock().unwrap();
-                buf.clear();
-                buf.extend_from_slice(map.as_slice());
-                println!("Captured frame of size: {} bytes", buf.len());
+                // Assuming RGB format (3 bytes per pixel)
+                let row_stride = (width * 4) as usize;
+                let mut frame_2d = vec![Pixel::white(); 1024 * (200)];
 
-                // Return success to allow pipeline to continue
+                // For yuv2
+                // for y in 0..height.min(1023) as usize {
+                //     for x in (0..width.min(512) as usize).step_by(2) {
+                //         // Get YUY2 data for two pixels
+                //         let offset = y * row_stride + x * 2;
+                //         let y0 = map[offset] as f32;
+                //         let u = map[offset + 1] as f32 - 128.0;
+                //         let y1 = map[offset + 2] as f32;
+                //         let v = map[offset + 3] as f32 - 128.0;
+
+                //         let p1 = yuv_to_rgb(y0, u, v);
+                //         let p2 = yuv_to_rgb(y1, u, v);
+                //         frame_2d[((y + 1) * 512 as usize) + x] = Pixel::new(p1[0], p1[1], p1[2]);
+                //         frame_2d[((y + 1) * 512 as usize) + x + 1] =
+                //             Pixel::new(p2[0], p2[1], p2[2]);
+                //     }
+                // }
+                for y in 0..height.min(PANEL_Y as u32) as usize {
+                    for x in (0..width.min(PANEL_X as u32) as usize) {
+                        let offset = y * row_stride + x * 4;
+                        let b = map[offset] as u8;
+                        let g = map[offset + 1] as u8;
+                        let r = map[offset + 2] as u8;
+                        frame_2d[((y + 1) * 1024 as usize) + x] = Pixel::new(r, g, b);
+                        frame_2d[((y + 1) * 1024 as usize) + x + 512] = Pixel::new(r, g, b);
+                    }
+                }
+                // Call the user-provided callback with the 2D array and resolution
+                on_frame_clone(frame_2d, width, height);
                 Ok(gstreamer::FlowSuccess::Ok)
             })
             .build(),
@@ -101,142 +218,7 @@ fn init_screencapture() {
         .expect("Unable to set pipeline to `Playing` state");
 }
 
-fn fill_image(image: &mut [Pixel], counter: i16, image_counter: u128) {
-    let sine_input = image_counter as f64 / 100.0;
-    let sine = sine_input.sin() * 0x69 as f64;
-    const CHANGE_PER_LINE_X: f64 = 0xff as f64 / PANEL_X as f64;
-    const CHANGE_PER_LINE_Y: f64 = 0xff as f64 / PANEL_Y as f64;
-
-    for fake_x in 0..BUFFER_X + 1 {
-        if fake_x == 0 {
-            continue;
-        }
-        let x: usize = fake_x - 1;
-        if x > PANEL_X {
-            continue;
-        }
-        for y in 0..BUFFER_Y {
-            if y > PANEL_Y {
-                continue;
-            }
-            if y < 8 {
-                if x / 8 % 2 == 0 {
-                    image[fake_x * BUFFER_Y + y] = Pixel::white()
-                } else {
-                    image[fake_x * BUFFER_Y + y] = Pixel::black()
-                }
-                continue;
-            }
-
-            image[fake_x * BUFFER_Y + y] = Pixel {
-                r: (sine + 128.0 + 20.0) as u32 as u8,
-                g: (((CHANGE_PER_LINE_X * y as f64) as u32) % 0xFF) as u8,
-                b: u8::min(
-                    (((CHANGE_PER_LINE_Y * x as f64) as u32) & 0xFF) as u8,
-                    counter as u8,
-                ),
-            };
-
-            if x == (counter) as usize {
-                image[fake_x * BUFFER_Y + y].r ^= 0xFF;
-                image[fake_x * BUFFER_Y + y].g ^= 0xFF;
-                image[fake_x * BUFFER_Y + y].b ^= 0xFF;
-            }
-        }
-    }
-}
-
-fn send_image_mmsg(
-    image: &[Pixel],
-    src_mac: MacAddr,
-    dst_mac: MacAddr,
-    socket_address: &mut sockaddr_ll,
-    sockfd: i32,
-    start: Instant,
-) {
-    unsafe {
-        let after_image = start.elapsed();
-
-        let chunks = image.chunks(CHUNK_SIZE);
-
-        let mut iovecs = [mem::zeroed::<iovec>(); CHUNK_COUNT];
-        let mut msgs = [mem::zeroed::<mmsghdr>(); CHUNK_COUNT];
-
-        let mut ethernet_packets = [[0u8; MutableEthernetPacket::minimum_packet_size()
-            + PAYLOAD_SIZE_SENDER
-            + HEADER_SIZE]; CHUNK_COUNT];
-        for (package_id, chunk) in chunks.enumerate() {
-            // Convert the pixel data to bytes
-            let mut payload = vec![0_u8; PAYLOAD_SIZE_SENDER];
-            for (index, pixel) in chunk.iter().enumerate() {
-                let pbytes = pixel_to_bytes(ColorFormat::BRG, pixel);
-                payload[index * BYTES_PER_PIXEL..(index + 1) * BYTES_PER_PIXEL]
-                    .copy_from_slice(&pbytes);
-            }
-
-            // Create the whole payload
-            let packet: LinsnSenderPacket = LinsnSenderPacket {
-                header: match package_id {
-                    0 => LinsnHeader::chunk_start(src_mac),
-                    _ => LinsnHeader::empty(package_id as u32),
-                },
-                payload: payload.try_into().unwrap(),
-            };
-            ethernet_packets[package_id]
-                .copy_from_slice(packet.as_ethernet(Some(src_mac), Some(dst_mac)).packet());
-
-            // iovec points to the packet buffer
-            iovecs[package_id].iov_base = ethernet_packets[package_id].as_ptr() as *mut c_void;
-            iovecs[package_id].iov_len = ethernet_packets[package_id].len();
-
-            // mmsghdr contains message headers
-            msgs[package_id].msg_hdr.msg_iov = &mut iovecs[package_id];
-            msgs[package_id].msg_hdr.msg_iovlen = 1;
-            msgs[package_id].msg_hdr.msg_name = socket_address as *mut sockaddr_ll as *mut c_void;
-            msgs[package_id].msg_hdr.msg_namelen = mem::size_of::<sockaddr_ll>() as u32;
-            msgs[package_id].msg_hdr.msg_control = ptr::null_mut();
-            msgs[package_id].msg_hdr.msg_controllen = 0;
-            msgs[package_id].msg_hdr.msg_flags = 0;
-            msgs[package_id].msg_len = 0;
-        }
-        let sending_start = Instant::now();
-        let ret = sendmmsg(sockfd, msgs.as_mut_ptr(), ethernet_packets.len() as u32, 0);
-        if ret == -1 {
-            eprintln!("Failed to send packets");
-            close(sockfd);
-            return;
-        }
-
-        let sending_done: Duration = sending_start.elapsed();
-        thread::sleep(Duration::from_millis(5 - sending_done.as_millis() as u64));
-        let sleeping_done: Duration = sending_start.elapsed();
-        let total = start.elapsed();
-
-        // else {
-        //     println!("Successfully sent {} packets", ret);
-        // }
-        if total
-            .abs_diff(sleeping_done.abs_diff(sending_done))
-            .as_millis()
-            > 1
-        {
-            println!(
-                "Total: {:.0?} Image: {:.0?} Sending: {:.0?} Sleeping: {:.0?}",
-                start.elapsed(),
-                after_image,
-                sending_done,
-                sleeping_done.abs_diff(sending_done),
-            );
-        }
-    }
-}
-
-fn send_image(
-    image: &[Pixel],
-    src_mac: MacAddr,
-    dst_mac: MacAddr,
-    tx: &mut Box<dyn datalink::DataLinkSender>,
-) {
+fn send_image(image: Vec<Pixel>, src_mac: MacAddr, dst_mac: MacAddr, tx: &mut dyn DataLinkSender) {
     let chunks = image.chunks(CHUNK_SIZE);
     for (package_id, chunk) in chunks.enumerate() {
         // Convert the pixel data to bytes
@@ -264,108 +246,39 @@ fn send_image(
     }
 }
 fn main() {
-    init_screencapture();
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: {} <interface_name>", args[0]);
+        return;
+    }
+    let interface_name = args[1].as_str();
 
-    unsafe {
-        let args: Vec<String> = std::env::args().collect();
-        if args.len() < 2 {
-            eprintln!("Usage: {} <interface_name>", args[0]);
-            return;
-        }
-        let interface_name = args[1].as_str();
+    let interfaces = datalink::interfaces();
+    let interface = interfaces
+        .into_iter()
+        .find(|iface| iface.name == interface_name)
+        .expect("Network interface not found");
 
-        let interfaces = datalink::interfaces();
-        let interface = interfaces
-            .into_iter()
-            .find(|iface| iface.name == interface_name)
-            .expect("Network interface not found");
+    let channel: datalink::Channel = datalink::channel(&interface, Default::default()).unwrap();
+    let tx = match channel {
+        Channel::Ethernet(tx, _) => tx,
+        _ => panic!("Unhandled channel type"),
+    };
+    let src_mac = interface.mac.unwrap_or(MacAddr::broadcast());
+    let dst_mac = MacAddr::zero();
 
-        let channel: datalink::Channel = datalink::channel(&interface, Default::default()).unwrap();
-        let mut tx = match channel {
-            Channel::Ethernet(tx, _) => tx,
-            _ => panic!("Unhandled channel type"),
-        };
+    let tx = Arc::new(Mutex::new(tx));
 
-        let if_name = CString::new(interface_name).unwrap();
-        let if_index = if_nametoindex(if_name.as_ptr());
-        if if_index == 0 {
-            eprintln!("Failed to get interface index");
-            return;
-        }
+    init_screencapture(move |image, width, height| {
+        let tx = Arc::clone(&tx);
 
-        let sockfd = socket(AF_PACKET, SOCK_RAW, (ETH_P_ALL as u16).to_be() as i32);
-        if sockfd == -1 {
-            eprintln!("Failed to create socket");
-            return;
-        }
-        let mut n: libc::c_int = 0;
-        let mut n_len = mem::size_of::<libc::c_int>() as libc::socklen_t;
-        let ret = libc::getsockopt(
-            sockfd,
-            libc::SOL_SOCKET,
-            libc::SO_SNDBUF,
-            &mut n as *mut i32 as *mut libc::c_void,
-            &mut n_len,
-        );
-        if ret != 0 {
-            eprintln!("failed to get socket params");
-            return;
-        }
-        println!("Send Buffer size: {:}", n);
+        // Lock the transmitter to send the image
+        let mut tx = tx.lock().expect("Failed to acquire lock on transmitter");
+        send_image(image, src_mac, dst_mac, tx.deref_mut().deref_mut());
 
-        n = 1024 * 1024 * 1024;
-        let ret = libc::setsockopt(
-            sockfd,
-            libc::SOL_SOCKET,
-            libc::SO_SNDBUF,
-            &n as *const _ as *const libc::c_void,
-            mem::size_of_val(&n) as libc::socklen_t,
-        );
-        if ret != 0 {
-            eprintln!("failed to get socket params");
-            return;
-        }
-
-        println!("Send Buffer size: {:}", n);
-
-        let src_mac = interface.mac.unwrap_or(MacAddr::broadcast());
-        let dst_mac = MacAddr::zero();
-
-        let dest_mac_byte = [
-            dst_mac.0, dst_mac.1, dst_mac.2, dst_mac.3, dst_mac.4, dst_mac.5,
-        ];
-
-        let mut socket_address = sockaddr_ll {
-            sll_family: AF_PACKET as u16,
-            sll_protocol: (ETH_P_ALL as u16).to_be(),
-            sll_ifindex: if_index as i32,
-            sll_hatype: 0,
-            sll_pkttype: 0,
-            sll_halen: ETH_ALEN as u8,
-            sll_addr: [0; 8],
-        };
-        ptr::copy_nonoverlapping(
-            dest_mac_byte.as_ptr(),
-            socket_address.sll_addr.as_mut_ptr(),
-            ETH_ALEN as usize,
-        );
-
-        let mut image = vec![Pixel { r: 0, g: 0, b: 0 }; BUFFER_Y * BUFFER_X];
-        let mut counter = 0xFFi16;
-        let mut image_counter = 0u128;
-        let mut direction = 1i16;
-        loop {
-            // let start: Instant = Instant::now();
-            fill_image(&mut image, counter, image_counter);
-            if counter >= 0xFF {
-                direction = -1;
-            } else if counter < 0x01 {
-                direction = 1;
-            }
-            counter += direction;
-            image_counter += 1;
-            //send_image_mmsg(&image, src_mac, dst_mac, &mut socket_address, sockfd, start)
-            send_image(&image, src_mac, dst_mac, &mut tx)
-        }
+        // println!("Captured frame of Resolution: {}x{}", width, height);
+    });
+    loop {
+        thread::sleep(Duration::from_secs(1));
     }
 }
