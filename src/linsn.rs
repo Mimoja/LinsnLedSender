@@ -10,6 +10,9 @@ pub const PAYLOAD_SIZE_SENDER: usize = 1440;
 pub const ETHERNET_TYPE_RECEIVER: u16 = 0xAA56_u16;
 pub const PAYLOAD_SIZE_RECEIVER: usize = 1450;
 
+pub const LINSN_FRAME_WIDTH: u32 = 1024;
+pub const LINSN_FRAME_HEIGHT: u32 = 512;
+
 #[derive(Debug, Copy, Clone)]
 #[repr(u8)]
 pub enum LinsnCommand {

@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use gstreamer::BufferRef;
 use linsn::Pixel;
+use linsn::LINSN_FRAME_HEIGHT;
+use linsn::LINSN_FRAME_WIDTH;
 use pnet::util::MacAddr;
 use screen_capture::init_gstreamer;
 use socket::BatchedSocketSender;
@@ -50,14 +52,17 @@ fn main() {
             let row_stride = (width * bytes_per_pixel) as usize;
 
             // This is the Linsn Frame to send in the end
-            let linsn_frame_height = if send_all_pixel { 512 } else { PANEL_X + 1 };
-            let linsn_frame_width = 1024u32;
+            let send_frame_height = if send_all_pixel {
+                LINSN_FRAME_HEIGHT
+            } else {
+                PANEL_X as u32 + 1
+            };
             let mut linsn_image =
-                vec![Pixel::white(); linsn_frame_width as usize * linsn_frame_height as usize];
+                vec![Pixel::white(); LINSN_FRAME_WIDTH as usize * send_frame_height as usize];
 
             // descide if we want to only fill what we are actually going to display
             let (copy_height, copy_width) = if copy_all_pixel {
-                (linsn_frame_height as u32, linsn_frame_width as u32)
+                (send_frame_height as u32, LINSN_FRAME_WIDTH as u32)
             } else {
                 (height.min(PANEL_X as u32), width.min(PANEL_Y as u32))
             };
@@ -68,8 +73,7 @@ fn main() {
                     let b = map[offset] as u8;
                     let g = map[offset + 1] as u8;
                     let r = map[offset + 2] as u8;
-                    linsn_image[((y + 1) * 1024 as usize) + x] = Pixel::new(r, g, b);
-                    linsn_image[((y + 1) * 1024 as usize) + x + 512] = Pixel::new(r, g, b);
+                    linsn_image[((y + 1) * LINSN_FRAME_WIDTH as usize) + x] = Pixel::new(r, g, b);
                 }
             }
             // Lock the sender and send the image
