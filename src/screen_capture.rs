@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use gstreamer::prelude::*;
-use gstreamer::BufferMap;
 use gstreamer::BufferRef;
 use gstreamer::Caps;
 use gstreamer::Fraction;
@@ -9,7 +8,6 @@ use gstreamer::{ElementFactory, Pipeline};
 use gstreamer_app::AppSink;
 use gstreamer_video::VideoInfo;
 
-use crate::linsn::Pixel;
 
 // Helper function for most webcam streams
 fn yuv_to_rgb(y: f32, u: f32, v: f32) -> [u8; 3] {

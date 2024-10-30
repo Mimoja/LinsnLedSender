@@ -1,9 +1,12 @@
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use gstreamer::BufferRef;
 use linsn::Pixel;
 use pnet::util::MacAddr;
 use screen_capture::init_screencapture;
+use socket::BatchedSocketSender;
 use socket::LinsnSocket;
 use socket::SimpleSocketSender;
 use std::thread;
@@ -23,12 +26,19 @@ fn main() {
     }
     let interface_name = args[1].as_str();
     let dst_mac = MacAddr::zero();
-    let sender = SimpleSocketSender::new(interface_name);
 
-    init_screencapture(
-        true,
-        PANEL_X,
-        PANEL_Y,
+    let copy_all_pixel = false;
+    let send_all_pixel = true;
+    let use_batched_sending = true;
+
+    let sender: Arc<Mutex<dyn LinsnSocket + Send>> = if use_batched_sending {
+        Arc::new(Mutex::new(BatchedSocketSender::new(interface_name)))
+    } else {
+        Arc::new(Mutex::new(SimpleSocketSender::new(interface_name)))
+    };
+
+    init_screencapture(false, PANEL_X, PANEL_Y, {
+        let sender = Arc::clone(&sender);
         move |buffer: &BufferRef, width: u32, height: u32, bytes_per_pixel: u32| {
             // Map the buffer to read frame data
             let map = buffer
@@ -38,12 +48,21 @@ fn main() {
             // Webcams often use Yuv2. We therefore enforve BGRx in gstreamer for now
             let row_stride = (width * bytes_per_pixel) as usize;
 
-            // This is the Lins Frame
-            let mut linsn_image = vec![Pixel::white(); 1024 * (200)];
+            // This is the Linsn Frame to send in the end
+            let linsn_frame_height = if send_all_pixel { 512 } else { PANEL_X + 1 };
+            let linsn_frame_width = 1024u32;
+            let mut linsn_image =
+                vec![Pixel::white(); linsn_frame_width as usize * linsn_frame_height as usize];
+
+            let (copy_height, copy_width) = if copy_all_pixel {
+                (linsn_frame_height as u32, linsn_frame_width as u32)
+            } else {
+                (height.min(PANEL_X as u32), width.min(PANEL_Y as u32))
+            };
 
             // Only fill what we are actually going to display
-            for y in 0..height.min(PANEL_X as u32) as usize {
-                for x in 0..width.min(PANEL_Y as u32) as usize {
+            for y in 0..copy_height as usize {
+                for x in 0..copy_width as usize {
                     let offset = y * row_stride + x * 4;
                     let b = map[offset] as u8;
                     let g = map[offset + 1] as u8;
@@ -52,9 +71,11 @@ fn main() {
                     linsn_image[((y + 1) * 1024 as usize) + x + 512] = Pixel::new(r, g, b);
                 }
             }
-            sender.clone().send(linsn_image, dst_mac);
-        },
-    );
+            // Lock the sender and send the image
+            let sender = sender.lock().expect("Failed to lock sender");
+            sender.send(linsn_image, dst_mac);
+        }
+    });
     loop {
         thread::sleep(Duration::from_secs(1));
     }
