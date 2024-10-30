@@ -5,7 +5,7 @@ use std::time::Duration;
 use gstreamer::BufferRef;
 use linsn::Pixel;
 use pnet::util::MacAddr;
-use screen_capture::init_screencapture;
+use screen_capture::init_gstreamer;
 use socket::BatchedSocketSender;
 use socket::LinsnSocket;
 use socket::SimpleSocketSender;
@@ -30,6 +30,7 @@ fn main() {
     let copy_all_pixel = false;
     let send_all_pixel = true;
     let use_batched_sending = true;
+    let play_demo_file = false;
 
     let sender: Arc<Mutex<dyn LinsnSocket + Send>> = if use_batched_sending {
         Arc::new(Mutex::new(BatchedSocketSender::new(interface_name)))
@@ -37,7 +38,7 @@ fn main() {
         Arc::new(Mutex::new(SimpleSocketSender::new(interface_name)))
     };
 
-    init_screencapture(false, PANEL_X, PANEL_Y, {
+    init_gstreamer(play_demo_file, PANEL_X, PANEL_Y, {
         let sender = Arc::clone(&sender);
         move |buffer: &BufferRef, width: u32, height: u32, bytes_per_pixel: u32| {
             // Map the buffer to read frame data

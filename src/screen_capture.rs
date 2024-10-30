@@ -8,7 +8,6 @@ use gstreamer::{ElementFactory, Pipeline};
 use gstreamer_app::AppSink;
 use gstreamer_video::VideoInfo;
 
-
 // Helper function for most webcam streams
 fn yuv_to_rgb(y: f32, u: f32, v: f32) -> [u8; 3] {
     let r = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
@@ -35,7 +34,7 @@ fn yuv_to_rgb(y: f32, u: f32, v: f32) -> [u8; 3] {
 //     }
 // }
 
-pub fn init_screencapture<F>(play_file: bool, panelx: usize, panely: usize, on_frame: F)
+pub fn init_gstreamer<F>(play_file: bool, panelx: usize, panely: usize, on_frame: F)
 where
     F: Fn(&BufferRef, u32, u32, u32) + Send + Sync + 'static,
 {
