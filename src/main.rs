@@ -55,16 +55,16 @@ fn main() {
             let mut linsn_image =
                 vec![Pixel::white(); linsn_frame_width as usize * linsn_frame_height as usize];
 
+            // descide if we want to only fill what we are actually going to display
             let (copy_height, copy_width) = if copy_all_pixel {
                 (linsn_frame_height as u32, linsn_frame_width as u32)
             } else {
                 (height.min(PANEL_X as u32), width.min(PANEL_Y as u32))
             };
 
-            // Only fill what we are actually going to display
             for y in 0..copy_height as usize {
                 for x in 0..copy_width as usize {
-                    let offset = y * row_stride + x * 4;
+                    let offset = y * row_stride + x * bytes_per_pixel as usize;
                     let b = map[offset] as u8;
                     let g = map[offset + 1] as u8;
                     let r = map[offset + 2] as u8;
