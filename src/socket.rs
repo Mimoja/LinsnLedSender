@@ -9,7 +9,7 @@ use pnet::packet::ethernet::MutableEthernetPacket;
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use libc::{
     c_void, close, if_nametoindex, iovec, mmsghdr, sendmmsg, sockaddr_ll, socket, AF_PACKET,
@@ -22,7 +22,7 @@ use std::ptr;
 const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
 pub trait LinsnSocket {
-    fn send(&self, image: Vec<Pixel>, dst_mac: MacAddr);
+    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr);
 }
 
 #[derive(Clone)]
@@ -52,7 +52,8 @@ impl SimpleSocketSender {
 }
 
 impl LinsnSocket for SimpleSocketSender {
-    fn send(&self, image: Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+        let before = Instant::now();
         let tx = Arc::clone(&self.tx);
 
         // Lock the transmitter to send the image
@@ -82,6 +83,8 @@ impl LinsnSocket for SimpleSocketSender {
                 None => eprintln!("Failed to send packet: No response"),
             }
         }
+        let now = Instant::now();
+        println!("Time for sending: {:.0?}", (now - before));
     }
 }
 
@@ -152,7 +155,9 @@ impl BatchedSocketSender {
 }
 
 impl LinsnSocket for BatchedSocketSender {
-    fn send(&self, image: Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+        let before: Instant = Instant::now();
+
         let mut socket_address: sockaddr_ll = sockaddr_ll {
             sll_family: AF_PACKET as u16,
             sll_protocol: (ETH_P_ALL as u16).to_be(),
@@ -164,19 +169,20 @@ impl LinsnSocket for BatchedSocketSender {
                 dst_mac.0, dst_mac.1, dst_mac.2, dst_mac.3, dst_mac.4, dst_mac.5, 0, 0,
             ],
         };
-
+        const MAX_CHUNK_COUNT: usize = 1100;
         unsafe {
             let chunks = image.chunks(CHUNK_SIZE);
             let chunk_count = chunks.len();
-            let mut iovecs = vec![mem::zeroed::<iovec>(); chunk_count];
-            let mut msgs = vec![mem::zeroed::<mmsghdr>(); chunk_count];
+            if chunk_count > MAX_CHUNK_COUNT {
+                panic!("Too many chunks!");
+            }
+            let mut iovecs = [mem::zeroed::<iovec>(); MAX_CHUNK_COUNT];
+            let mut msgs = [mem::zeroed::<mmsghdr>(); MAX_CHUNK_COUNT];
 
-            let mut ethernet_packets = vec![
-                [0u8; MutableEthernetPacket::minimum_packet_size()
-                    + PAYLOAD_SIZE_SENDER
-                    + HEADER_SIZE];
-                chunk_count
-            ];
+            let mut ethernet_packets = [[0u8; MutableEthernetPacket::minimum_packet_size()
+                + PAYLOAD_SIZE_SENDER
+                + HEADER_SIZE]; MAX_CHUNK_COUNT];
+
             for (package_id, chunk) in chunks.enumerate() {
                 // Convert the pixel data to bytes
                 let mut payload = vec![0 as u8; PAYLOAD_SIZE_SENDER];
@@ -215,19 +221,28 @@ impl LinsnSocket for BatchedSocketSender {
                 msgs[package_id].msg_hdr.msg_flags = 0;
                 msgs[package_id].msg_len = 0;
             }
+            // let before_sending = Instant::now();
             let ret = sendmmsg(
                 self.sockfd,
                 msgs.as_mut_ptr(),
                 ethernet_packets.len() as u32,
                 0,
             );
+
             if ret == -1 {
                 eprintln!("Failed to send packets");
                 close(self.sockfd);
                 return;
             } else {
                 let now = Instant::now();
-                println!("{:.0?} : Sent", now)
+                // // println!("Time for preparing: {:.0?}", before-before_sending);
+                // // println!("Time for sending: {:.0?}" , now-before_sending);
+                if (now - before).as_millis() > (1000 / 60) {
+                    println!(
+                        "Time for sending dropped below 60 fps: {:.0?}",
+                        (now - before)
+                    );
+                }
             }
         }
     }

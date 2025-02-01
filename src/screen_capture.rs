@@ -1,5 +1,9 @@
+use std::f64::consts::PI;
 use std::sync::Arc;
 
+use gstreamer::glib;
+use gstreamer::glib::EnumClass;
+use gstreamer::glib::EnumValue;
 use gstreamer::prelude::*;
 use gstreamer::BufferRef;
 use gstreamer::Caps;
@@ -71,9 +75,16 @@ where
 
     let convert = ElementFactory::make("videoconvert").build().unwrap();
     let scale = ElementFactory::make("videoconvertscale")
-        .property("add-borders", true)
+        .property("add-borders", false)
         .build()
         .unwrap();
+
+    let rotate = ElementFactory::make("rotate")
+        .property("angle", PI)
+        .property_from_str("off-edge-pixels", "clamp")
+        .build()
+        .unwrap();
+
     let rate = ElementFactory::make("videorate").build().unwrap();
 
     let clocksync = ElementFactory::make("clocksync").build().unwrap();
@@ -118,6 +129,7 @@ where
         .add_many(&[
             &convert,
             &scale,
+            &rotate,
             &rate,
             &clocksync,
             &tee,
@@ -125,12 +137,17 @@ where
             &queue_local_window,
             &sink_leds,
             &scale_window,
-            &sink_window,
         ])
         .expect("Failed to add elements to the pipeline");
 
+    if false {
+        pipeline
+            .add_many(&[&sink_window])
+            .expect("Failed to add elements to the pipeline");
+    }
+
     // Link elements in the pipeline
-    gstreamer::Element::link_many(&[&convert, &scale, &rate, &clocksync, &tee])
+    gstreamer::Element::link_many(&[&convert, &rotate, &scale, &rate, &clocksync, &tee])
         .expect("Failed to link elements");
 
     // Dynamically link decodebin to videoconvert if filesrc is used
@@ -148,14 +165,14 @@ where
         src.link(&convert).unwrap();
     }
 
-    tee.link(&queue_local_window).unwrap();
+    //tee.link(&queue_local_window).unwrap();
     tee.link(&queue_leds).unwrap();
 
     // Link the rest of the elements
-    queue_local_window.link(&scale_window).unwrap();
+    //queue_local_window.link(&scale_window).unwrap();
     queue_leds.link(&sink_leds).unwrap();
 
-    scale_window.link(&sink_window).unwrap();
+    //scale_window.link(&sink_window).unwrap();
 
     // Wrap the callback in an Arc<Mutex> for safe sharing across threads
     let on_frame = Arc::new(on_frame);
@@ -190,7 +207,6 @@ where
     );
 
     // Start the pipeline
-    pipeline
-        .set_state(gstreamer::State::Playing)
+    dbg!(pipeline.set_state(gstreamer::State::Playing))
         .expect("Unable to set pipeline to `Playing` state");
 }
