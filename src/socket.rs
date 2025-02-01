@@ -1,7 +1,8 @@
 use crate::linsn::HEADER_SIZE;
 use crate::linsn::{
-    pixel_to_bytes, ColorFormat, LinsnHeader, LinsnSenderPacket, Pixel, PAYLOAD_SIZE_SENDER,
+    pixel_to_bytes, ColorFormat, LinsnHeader, LinsnSenderPacket, PAYLOAD_SIZE_SENDER,
 };
+use image::Rgb;
 use pnet::datalink;
 use pnet::datalink::Channel;
 use pnet::datalink::DataLinkSender;
@@ -22,7 +23,7 @@ use std::ptr;
 const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
 pub trait LinsnSocket {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr);
+    fn send(&self, image: &Vec<Rgb<u8>>, dst_mac: MacAddr);
 }
 
 #[derive(Clone)]
@@ -52,7 +53,7 @@ impl SimpleSocketSender {
 }
 
 impl LinsnSocket for SimpleSocketSender {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &Vec<Rgb<u8>>, dst_mac: MacAddr) {
         let before = Instant::now();
         let tx = Arc::clone(&self.tx);
 
@@ -155,7 +156,7 @@ impl BatchedSocketSender {
 }
 
 impl LinsnSocket for BatchedSocketSender {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &Vec<Rgb<u8>>, dst_mac: MacAddr) {
         let before: Instant = Instant::now();
 
         let mut socket_address: sockaddr_ll = sockaddr_ll {

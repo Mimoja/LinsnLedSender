@@ -21,32 +21,6 @@ pub enum LinsnCommand {
     ANNOUNCE = 0x96u8,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Pixel {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-impl Pixel {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
-        Pixel { r, g, b }
-    }
-    pub fn white() -> Self {
-        Pixel {
-            r: 0xFF,
-            g: 0xFF,
-            b: 0xFF,
-        }
-    }
-    pub fn black() -> Self {
-        Pixel {
-            r: 0x00,
-            g: 0x00,
-            b: 0x00,
-        }
-    }
-}
-
 pub enum ColorFormat {
     RGB,
     GBR,
@@ -54,12 +28,12 @@ pub enum ColorFormat {
     BGR,
 }
 
-pub fn pixel_to_bytes(format: ColorFormat, pixel: &Pixel) -> [u8; 3] {
+pub fn pixel_to_bytes(format: ColorFormat, pixel: &image::Rgb<u8>) -> [u8; 3] {
     match format {
-        ColorFormat::GBR => [pixel.g, pixel.b, pixel.r],
-        ColorFormat::RGB => [pixel.r, pixel.g, pixel.b],
-        ColorFormat::BRG => [pixel.b, pixel.r, pixel.g],
-        ColorFormat::BGR => [pixel.b, pixel.g, pixel.r],
+        ColorFormat::GBR => [pixel[1], pixel[2], pixel[0]],
+        ColorFormat::RGB => [pixel[0], pixel[1], pixel[2]],
+        ColorFormat::BRG => [pixel[2], pixel[0], pixel[1]],
+        ColorFormat::BGR => [pixel[2], pixel[1], pixel[0]],
     }
 }
 

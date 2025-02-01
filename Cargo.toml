@@ -11,3 +11,6 @@ gstreamer = "0.23.2"
 gstreamer-app = "0.23.2"
 gstreamer-video = "0.23.2"
 gstreamer-pbutils = "0.23.2"
+
+image = "*"
+rand = "*"
