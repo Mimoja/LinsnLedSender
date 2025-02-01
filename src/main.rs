@@ -10,13 +10,12 @@ use image::imageops::resize;
 use image::DynamicImage;
 use image::ImageBuffer;
 use image::Rgb;
-use libc::rand;
 use libc::size_t;
 use linsn::LINSN_FRAME_HEIGHT;
 use linsn::LINSN_FRAME_WIDTH;
 use pnet::util::MacAddr;
 use primitives::Panel;
-use rand::Rng;
+use rand::prelude::*;
 use screen_capture::init_gstreamer;
 use socket::BatchedSocketSender;
 use socket::LinsnSocket;
@@ -91,6 +90,7 @@ fn main() {
     //     thread::sleep(Duration::from_millis(0));
     // }
 
+    let mut rng = rand::rngs::ThreadRng::default();
     let mut panel = Panel::new(192, 192, false, false);
 
     // Train
@@ -105,12 +105,20 @@ fn main() {
     let backgrounds = load_image_directory("assets/background");
 
     // Sky
-    let skys = load_image_directory("assets/sky");
+    let sky1 = load_image_directory("assets/sky");
+    let sky2 = load_image_directory("assets/sky/level2");
+    let sky3 = load_image_directory("assets/sky/level3");
+    let sky4 = load_image_directory("assets/sky/level4");
 
     // Dragon
     let dragon_imgs = load_image_directory("assets/dragon");
     let mut dragon = AnimatedSprite::new(dragon_imgs, 2.5, sprite::LoopMode::PingPong, 2.0);
 
+    // Schwebebahn
+    let schwebebahn = load_image_directory("assets/schwebebahn");
+
+    let mut skys_data = vec![sky4, sky3, sky2, sky1];
+    let mut skys = vec![vec![], vec![], vec![], vec![]];
     let before = Instant::now();
     loop {
         let ts = Instant::now() - before;
@@ -148,44 +156,37 @@ fn main() {
             );
         }
 
-        let sky_offset = ((ts.as_millis() / 500) % 192) as i32;
-        for i in 0usize..16 {
-            panel.draw_image(
-                (i as i32 * 32) - sky_offset,
-                96,
-                &skys[i % skys.len()],
-                2.0,
-                false,
-                false,
-            );
-            panel.draw_image(
-                (i as i32 * 32) - sky_offset,
-                64,
-                &skys[(i + 6) % skys.len()],
-                2.0,
-                false,
-                false,
-            );
-            panel.draw_image(
-                (i as i32 * 32) - sky_offset,
-                32,
-                &skys[(i + 8) % skys.len()],
-                2.0,
-                false,
-                false,
-            );
-            panel.draw_image(
-                (i as i32 * 32) - sky_offset,
-                0,
-                &skys[(i + 11) % skys.len()],
-                2.0,
-                false,
-                false,
-            );
+        let sky_offset = ((ts.as_millis() / 500) % 32) as i32;
+        for (i, (sky, sky_data)) in skys.iter_mut().zip(&skys_data).enumerate() {
+            while sky.len() < 8 {
+                sky.push(&sky_data[rng.next_u64() as usize % sky_data.len()]);
+            }
+
+            let mut should_pop = false;
+            for (j, s) in sky.clone().into_iter().enumerate() {
+                let x = (j as i32 * 32) - sky_offset;
+                panel.draw_image(x, i as i32 * 32, s, 2.0, false, false);
+
+                if i == 0 {
+                    if x % 32 == 0 {
+                        should_pop = true;
+                    }
+                }
+            }
+
+            if should_pop {
+                sky.pop();
+            }
         }
 
         let dragon_offset = ((ts.as_millis() / 100) % 800) as i32;
         dragon.draw(&mut panel, dragon_offset - 64, 16);
+
+        /*
+        let schwebebahn_offset = ((ts.as_millis() / 50) % 800) as i32;
+        panel.draw_image((schwebebahn_offset - 256) * -1, 138, &schwebebahn[1], 2.0, false, false);
+        panel.draw_image(0, 132, &schwebebahn[0], 2.0, false, false);
+        */
 
         panel.send(sender.clone(), dst_mac);
     }
