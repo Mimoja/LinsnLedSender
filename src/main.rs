@@ -21,6 +21,7 @@ use socket::BatchedSocketSender;
 use socket::LinsnSocket;
 use socket::SimpleSocketSender;
 use sprite::load_image_directory;
+use sprite::AnimatedPath;
 use sprite::AnimatedSprite;
 use std::thread;
 
@@ -113,6 +114,7 @@ fn main() {
     // Dragon
     let dragon_imgs = load_image_directory("assets/dragon");
     let mut dragon = AnimatedSprite::new(dragon_imgs, 2.5, sprite::LoopMode::PingPong, 2.0);
+    dragon.set_animation(  AnimatedPath::new_random(&mut rng, 16000));
 
     // Schwebebahn
     let schwebebahn = load_image_directory("assets/schwebebahn");
@@ -120,6 +122,7 @@ fn main() {
     let mut skys_data = vec![sky4, sky3, sky2, sky1];
     let mut skys = vec![vec![], vec![], vec![], vec![]];
     let before = Instant::now();
+
     loop {
         let ts = Instant::now() - before;
         panel.clear();
@@ -129,7 +132,7 @@ fn main() {
         }
 
         for i in 0..4 {
-            train.draw(&mut panel, 64 * i, 192 - 32);
+            train.draw_at(&mut panel, 64 * i, 192 - 32);
         }
 
         let track_offset = ((ts.as_millis() / 200) % 32) as i32;
@@ -179,8 +182,16 @@ fn main() {
             }
         }
 
-        let dragon_offset = ((ts.as_millis() / 100) % 800) as i32;
-        dragon.draw(&mut panel, dragon_offset - 64, 16);
+        if dragon.has_finished() && rng.gen_bool(0.002) {
+            dragon.set_animation(  AnimatedPath::new_random(&mut rng, 16000));
+        }
+        dragon.animate(&mut panel);
+
+        /*
+        let schwebebahn_offset = ((ts.as_millis() / 50) % 800) as i32;
+        panel.draw_image((schwebebahn_offset - 256) * -1, 138, &schwebebahn[1], 2.0, false, false);
+        panel.draw_image(0, 132, &schwebebahn[0], 2.0, false, false);
+        */
 
         /*
         let schwebebahn_offset = ((ts.as_millis() / 50) % 800) as i32;
