@@ -61,7 +61,7 @@ fn main() {
 
     init_gstreamer(play_demo_file, PANEL_X, PANEL_Y, {
         let linsn_image_lock = Arc::clone(&inactive_buffer);
-        let should_flip = should_flip.clone();
+        let should_flip = Arc::clone(&should_flip);
         move |buffer: &BufferRef, width: u32, height: u32, bytes_per_pixel: u32| {
             // Map the buffer to read frame data
             let map = buffer
