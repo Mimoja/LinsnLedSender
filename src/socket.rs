@@ -23,7 +23,7 @@ use crate::linsn::{
 const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
 pub trait LinsnSocket {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr);
+    fn send(&self, image: &[Pixel], dst_mac: MacAddr);
 }
 
 #[derive(Clone)]
@@ -53,7 +53,7 @@ impl SimpleSocketSender {
 }
 
 impl LinsnSocket for SimpleSocketSender {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &[Pixel], dst_mac: MacAddr) {
         let before = Instant::now();
         let tx = Arc::clone(&self.tx);
 
@@ -156,7 +156,7 @@ impl BatchedSocketSender {
 }
 
 impl LinsnSocket for BatchedSocketSender {
-    fn send(&self, image: &Vec<Pixel>, dst_mac: MacAddr) {
+    fn send(&self, image: &[Pixel], dst_mac: MacAddr) {
         let before: Instant = Instant::now();
 
         let mut socket_address: sockaddr_ll = sockaddr_ll {
