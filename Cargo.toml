@@ -13,6 +13,9 @@ gstreamer = "0.23.2"
 gstreamer-app = "0.23.2"
 gstreamer-video = "0.23.2"
 
+[profile.release]
+lto = "thin"
+
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
 bare_urls = "warn"
