@@ -104,7 +104,7 @@ impl BatchedSocketSender {
             .find(|iface| iface.name == interface_name)
             .expect("Network interface not found");
 
-        let src_mac: MacAddr = interface.mac.or(Some(MacAddr::broadcast())).unwrap();
+        let src_mac: MacAddr = interface.mac.unwrap_or(MacAddr::broadcast());
 
         unsafe {
             let if_name = CString::new(interface_name).unwrap();
@@ -186,7 +186,7 @@ impl LinsnSocket for BatchedSocketSender {
 
             for (package_id, chunk) in chunks.enumerate() {
                 // Convert the pixel data to bytes
-                let mut payload = vec![0 as u8; PAYLOAD_SIZE_SENDER];
+                let mut payload = vec![0_u8; PAYLOAD_SIZE_SENDER];
                 for (index, pixel) in chunk.iter().enumerate() {
                     let pbytes = pixel_to_bytes(ColorFormat::BRG, pixel);
                     payload[index * BYTES_PER_PIXEL..(index + 1) * BYTES_PER_PIXEL]
@@ -202,7 +202,7 @@ impl LinsnSocket for BatchedSocketSender {
                     payload: payload.try_into().unwrap(),
                 };
                 ethernet_packets[package_id].copy_from_slice(
-                    &packet
+                    packet
                         .as_ethernet(Some(self.src_mac), Some(dst_mac))
                         .packet(),
                 );
@@ -233,7 +233,6 @@ impl LinsnSocket for BatchedSocketSender {
             if ret == -1 {
                 eprintln!("Failed to send packets");
                 close(self.sockfd);
-                return;
             } else {
                 let now = Instant::now();
                 // // println!("Time for preparing: {:.0?}", before-before_sending);

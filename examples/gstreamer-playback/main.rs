@@ -73,7 +73,7 @@ fn main() {
 
             // descide if we want to only fill what we are actually going to display
             let (copy_height, copy_width) = if copy_all_pixel {
-                (send_frame_height as u32, LINSN_FRAME_WIDTH as u32)
+                (send_frame_height, LINSN_FRAME_WIDTH)
             } else {
                 (height.min(PANEL_X as u32), width.min(PANEL_Y as u32))
             };
@@ -82,9 +82,9 @@ fn main() {
             for y in 0..copy_height as usize {
                 for x in 0..copy_width as usize {
                     let offset = y * row_stride + x * bytes_per_pixel as usize;
-                    let b = map[offset] as u8;
-                    let g = map[offset + 1] as u8;
-                    let r = map[offset + 2] as u8;
+                    let b = map[offset];
+                    let g = map[offset + 1];
+                    let r = map[offset + 2];
                     linsn_image[((y + 1) * LINSN_FRAME_WIDTH as usize) + x] = Pixel::new(r, g, b);
                 }
             }
@@ -152,7 +152,7 @@ where
             .unwrap();
         let decode = ElementFactory::make("decodebin").build().unwrap();
 
-        pipeline.add_many(&[&filesrc, &decode]).unwrap();
+        pipeline.add_many([&filesrc, &decode]).unwrap();
         filesrc.link(&decode).unwrap();
 
         // Return decodebin as the source
@@ -199,7 +199,7 @@ where
         caps = caps
             .field("height", panelx as i32)
             .field("width", panely as i32)
-            .field("framerate", &Fraction::new(120, 1));
+            .field("framerate", Fraction::new(120, 1));
     }
     let caps = caps.build();
 
@@ -222,7 +222,7 @@ where
 
     // Add elements to the pipeline
     pipeline
-        .add_many(&[
+        .add_many([
             &convert,
             &scale,
             &rotate,
@@ -238,12 +238,12 @@ where
 
     if false {
         pipeline
-            .add_many(&[&sink_window])
+            .add_many([&sink_window])
             .expect("Failed to add elements to the pipeline");
     }
 
     // Link elements in the pipeline
-    gstreamer::Element::link_many(&[&convert, &rotate, &scale, &rate, &clocksync, &tee])
+    gstreamer::Element::link_many([&convert, &rotate, &scale, &rate, &clocksync, &tee])
         .expect("Failed to link elements");
 
     // Dynamically link decodebin to videoconvert if filesrc is used
@@ -292,7 +292,7 @@ where
                 let caps = sample.caps().expect("Failed to get caps from sample");
                 // println!("Caps: {:?}", caps);
 
-                let info = VideoInfo::from_caps(&caps).expect("Failed to get VideoInfo from caps");
+                let info = VideoInfo::from_caps(caps).expect("Failed to get VideoInfo from caps");
                 let width = info.width();
                 let height = info.height();
                 // Call the user-provided callback with the 2D array and resolution
