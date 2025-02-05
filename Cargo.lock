@@ -326,36 +326,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gstreamer-audio"
-version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36d39b07213f83055fc705a384fa32ad581776b8e5b04c86f3a419ec5dfc0f81"
-dependencies = [
- "cfg-if",
- "glib",
- "gstreamer",
- "gstreamer-audio-sys",
- "gstreamer-base",
- "libc",
- "once_cell",
- "smallvec",
-]
-
-[[package]]
-name = "gstreamer-audio-sys"
-version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d84744e7ac8f8bc0cf76b7be40f2d5be12e6cf197e4c6ca9d3438109c21e2f51"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
 name = "gstreamer-base"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -378,36 +348,6 @@ dependencies = [
  "glib-sys",
  "gobject-sys",
  "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-pbutils"
-version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bc96a1ef43542ba68159e440adc7211e1f03824d91fd8f4e05b84f84002d33c"
-dependencies = [
- "glib",
- "gstreamer",
- "gstreamer-audio",
- "gstreamer-pbutils-sys",
- "gstreamer-video",
- "libc",
- "thiserror",
-]
-
-[[package]]
-name = "gstreamer-pbutils-sys"
-version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ba8e30cb601e11aa8b61d40bef1891ba51744d108406807932d0afc58992205"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-audio-sys",
- "gstreamer-sys",
- "gstreamer-video-sys",
  "libc",
  "system-deps",
 ]
@@ -508,7 +448,6 @@ dependencies = [
  "clippy",
  "gstreamer",
  "gstreamer-app",
- "gstreamer-pbutils",
  "gstreamer-video",
  "libc",
  "pnet",
