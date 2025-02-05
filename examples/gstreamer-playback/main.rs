@@ -1,26 +1,20 @@
-use std::f64::consts::PI;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
-use std::time::Duration;
+use std::{
+    f64::consts::PI,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use pnet::util::MacAddr;
 
-use gstreamer::prelude::*;
-use gstreamer::BufferRef;
-use gstreamer::Caps;
-use gstreamer::Fraction;
-use gstreamer::{ElementFactory, Pipeline};
+use gstreamer::{prelude::*, BufferRef, Caps, ElementFactory, Fraction, Pipeline};
 use gstreamer_app::AppSink;
 use gstreamer_video::VideoInfo;
 
-use linsn_led_sender::linsn::Pixel;
-use linsn_led_sender::linsn::LINSN_FRAME_HEIGHT;
-use linsn_led_sender::linsn::LINSN_FRAME_WIDTH;
-use linsn_led_sender::socket::BatchedSocketSender;
-use linsn_led_sender::socket::LinsnSocket;
-use linsn_led_sender::socket::SimpleSocketSender;
+use linsn_led_sender::{
+    linsn::{Pixel, LINSN_FRAME_HEIGHT, LINSN_FRAME_WIDTH},
+    socket::{BatchedSocketSender, LinsnSocket, SimpleSocketSender},
+};
 
 const PANEL_X: usize = 192;
 const PANEL_Y: usize = 192;

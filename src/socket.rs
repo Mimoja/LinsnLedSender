@@ -1,23 +1,24 @@
-use crate::linsn::HEADER_SIZE;
-use crate::linsn::{
-    pixel_to_bytes, ColorFormat, LinsnHeader, LinsnSenderPacket, Pixel, PAYLOAD_SIZE_SENDER,
+use std::{
+    ffi::CString,
+    mem, ptr,
+    sync::{Arc, Mutex},
+    time::Instant,
 };
-use pnet::datalink;
-use pnet::datalink::Channel;
-use pnet::datalink::DataLinkSender;
-use pnet::packet::ethernet::MutableEthernetPacket;
-use pnet::packet::Packet;
-use pnet::util::MacAddr;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use libc::{
     c_void, close, if_nametoindex, iovec, mmsghdr, sendmmsg, sockaddr_ll, socket, AF_PACKET,
     ETH_ALEN, ETH_P_ALL, SOCK_RAW,
 };
-use std::ffi::CString;
-use std::mem;
-use std::ptr;
+use pnet::{
+    datalink::{self, Channel, DataLinkSender},
+    packet::{ethernet::MutableEthernetPacket, Packet},
+    util::MacAddr,
+};
+
+use crate::linsn::{
+    pixel_to_bytes, ColorFormat, LinsnHeader, LinsnSenderPacket, Pixel, HEADER_SIZE,
+    PAYLOAD_SIZE_SENDER,
+};
 
 const BYTES_PER_PIXEL: usize = 3;
 const CHUNK_SIZE: usize = PAYLOAD_SIZE_SENDER / BYTES_PER_PIXEL;
