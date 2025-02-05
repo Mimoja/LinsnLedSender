@@ -1,5 +1,5 @@
 [package]
-name = "sender"
+name = "linsn-led-sender"
 version = "0.1.0"
 edition = "2021"
 
