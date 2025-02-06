@@ -1,5 +1,6 @@
 use std::{
     f64::consts::PI,
+    path::PathBuf,
     sync::{atomic::AtomicBool, Arc, Mutex},
     thread,
     time::Duration,
@@ -11,6 +12,8 @@ use gstreamer::{prelude::*, BufferRef, Caps, ElementFactory, Fraction, Pipeline}
 use gstreamer_app::AppSink;
 use gstreamer_video::VideoInfo;
 
+use clap::Parser;
+
 use linsn_led_sender::{
     linsn::{Pixel, LINSN_FRAME_HEIGHT, LINSN_FRAME_WIDTH},
     socket::{BatchedSocketSender, LinsnSocket, SimpleSocketSender},
@@ -19,24 +22,43 @@ use linsn_led_sender::{
 const PANEL_X: usize = 192;
 const PANEL_Y: usize = 192;
 
+/// A small example for streaming video (screen-capture or from a file) into
+/// a Linsn panel over ethernet using gstreamer
+#[derive(Parser)]
+struct Args {
+    /// Name of the Ethernet interface the panel's receiver is attached to
+    interface_name: String,
+
+    /// Path to a file to stream instead of a screen capture
+    #[clap(short, long)]
+    file: Option<PathBuf>,
+
+    /// MAC address of the Linsn panel's receiver that you want to stream to
+    #[clap(short, long, default_value_t = MacAddr::zero())]
+    dst_mac: MacAddr,
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <interface_name>", args[0]);
-        return;
+    let args = Args::parse();
+
+    if let Some(file_path) = &args.file {
+        // The Rust GStreamer bindings only give an unhelpful state change error
+        // if the file is inaccessible, so we better do something useful ourselves.
+
+        assert!(
+            file_path.is_file(),
+            "Video file path did not point to a readable file"
+        );
     }
-    let interface_name = args[1].as_str();
-    let dst_mac = MacAddr::zero();
 
     let copy_all_pixel = false;
     let send_all_pixel = false;
     let use_batched_sending = true;
-    let play_demo_file = true;
 
     let sender: Arc<Mutex<dyn LinsnSocket + Send>> = if use_batched_sending {
-        Arc::new(Mutex::new(BatchedSocketSender::new(interface_name)))
+        Arc::new(Mutex::new(BatchedSocketSender::new(&args.interface_name)))
     } else {
-        Arc::new(Mutex::new(SimpleSocketSender::new(interface_name)))
+        Arc::new(Mutex::new(SimpleSocketSender::new(&args.interface_name)))
     };
 
     // This is the Linsn Frame to send in the end
@@ -59,7 +81,7 @@ fn main() {
 
     let should_flip = Arc::new(AtomicBool::new(false));
 
-    init_gstreamer(play_demo_file, PANEL_X, PANEL_Y, {
+    init_gstreamer(args.file, PANEL_X, PANEL_Y, {
         let linsn_image_lock = Arc::clone(&inactive_buffer);
         let should_flip = Arc::clone(&should_flip);
         move |buffer: &BufferRef, width: u32, height: u32, bytes_per_pixel: u32| {
@@ -103,7 +125,7 @@ fn main() {
         }
         // Lock the sender and send the image
         let sender = sender.lock().expect("Failed to lock sender");
-        sender.send(&active, dst_mac);
+        sender.send(&active, args.dst_mac);
         thread::sleep(Duration::from_millis(0));
     }
 }
@@ -134,8 +156,12 @@ fn yuv_to_rgb(y: f32, u: f32, v: f32) -> [u8; 3] {
 //     }
 // }
 
-pub fn init_gstreamer<F>(play_file: bool, panelx: usize, panely: usize, on_frame: F)
-where
+pub fn init_gstreamer<F>(
+    video_file_path: Option<PathBuf>,
+    panelx: usize,
+    panely: usize,
+    on_frame: F,
+) where
     F: Fn(&BufferRef, u32, u32, u32) + Send + Sync + 'static,
 {
     gstreamer::init().expect("Failed to initialize GStreamer");
@@ -144,10 +170,15 @@ where
     let pipeline = Pipeline::with_name("screen-capture");
 
     // Set up the source element
-    let src = if play_file {
+    let src = if let Some(video_file_path) = &video_file_path {
         // filesrc with decodebin for video files
         let filesrc = ElementFactory::make("filesrc")
-            .property("location", "big_buck_bunny_1080p_h264.mov") // Set the path to your file
+            .property(
+                "location",
+                video_file_path
+                    .to_str()
+                    .expect("Video file path was not valid UTF-8"),
+            )
             .build()
             .unwrap();
         let decode = ElementFactory::make("decodebin").build().unwrap();
@@ -191,7 +222,7 @@ where
 
     let mut caps = Caps::builder("video/x-raw").field("format", "BGRx");
 
-    if play_file {
+    if video_file_path.is_some() {
         caps = caps
             .field("height", panelx as i32)
             .field("width", panely as i32)
@@ -247,7 +278,7 @@ where
         .expect("Failed to link elements");
 
     // Dynamically link decodebin to videoconvert if filesrc is used
-    if play_file {
+    if video_file_path.is_some() {
         src.connect_pad_added(move |_, src_pad| {
             let sink_pad = convert.static_pad("sink").expect("Failed to get sink pad");
             if !sink_pad.is_linked() {

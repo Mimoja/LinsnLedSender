@@ -9,6 +9,7 @@ pnet = "0.35.0"
 libc = "0.2.169"
 
 [dev-dependencies]
+clap = { version = "4.5.28", features = ["derive"] }
 gstreamer = "0.23.2"
 gstreamer-app = "0.23.2"
 gstreamer-video = "0.23.2"
